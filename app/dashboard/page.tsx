@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { signOut } from 'next-auth/react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,6 +17,7 @@ import {
   Activity, FileText, TrendingUp, Users, DollarSign, LogOut, Loader2, Download,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { FiltroTabla, Filtros } from '@/components/FiltroTabla';
 
 const MODULOS = [
   { value: 'internaciones',          label: 'Internaciones',         icon: Activity },
@@ -79,6 +80,28 @@ export default function DashboardPage() {
   const [fechaConsulta, setFechaConsulta] = useState('');
   const [truncado, setTruncado] = useState(false);
   const [totalReal, setTotalReal] = useState(0);
+  const [filtros, setFiltros] = useState<Filtros>({});
+
+  // Filas después de aplicar filtros (AND entre columnas, OR dentro de la misma columna)
+  const filasFiltradas = useMemo(() => {
+    if (!datos) return [];
+    const activos = Object.entries(filtros).filter(([, s]) => s.size > 0);
+    if (activos.length === 0) return datos.filas;
+    return datos.filas.filter(fila =>
+      activos.every(([idxStr, vals]) => vals.has(fila[Number(idxStr)] ?? ''))
+    );
+  }, [datos, filtros]);
+
+  const handleFiltroChange = useCallback((colIdx: number, valores: Set<string>) => {
+    setFiltros(prev => {
+      const next = { ...prev };
+      if (valores.size === 0) delete next[colIdx];
+      else next[colIdx] = valores;
+      return next;
+    });
+  }, []);
+
+  const handleLimpiarFiltros = useCallback(() => setFiltros({}), []);
 
   async function handleConsultar(e: React.FormEvent) {
     e.preventDefault();
@@ -89,6 +112,7 @@ export default function DashboardPage() {
     setLoading(true);
     setError('');
     setDatos(null);
+    setFiltros({});
     setTruncado(false);
     try {
       const res = await fetch('/api/datos', {
@@ -121,14 +145,16 @@ export default function DashboardPage() {
 
   function handleExportar() {
     if (!datos) return;
-    const ws = XLSX.utils.aoa_to_sheet([datos.headers, ...datos.filas]);
+    // Exporta solo las filas visibles (con filtros aplicados)
+    const ws = XLSX.utils.aoa_to_sheet([datos.headers, ...filasFiltradas]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, moduloConsultado);
     XLSX.writeFile(wb, `${moduloConsultado}_${desde}_${hasta}.xlsx`);
   }
 
   const moduloLabel = MODULOS.find(m => m.value === moduloConsultado)?.label ?? moduloConsultado;
-  const chartData = datos ? buildChartData(datos.headers, datos.filas) : [];
+  const chartData = datos ? buildChartData(datos.headers, filasFiltradas) : [];
+  const filtrosActivosCount = Object.values(filtros).filter(s => s.size > 0).length;
 
   return (
     <div className="flex h-screen bg-gray-100 overflow-hidden">
@@ -142,7 +168,7 @@ export default function DashboardPage() {
           {MODULOS.map(({ value, label, icon: Icon }) => (
             <button
               key={value}
-              onClick={() => { setModuloActivo(value); setDatos(null); setError(''); }}
+              onClick={() => { setModuloActivo(value); setDatos(null); setError(''); setFiltros({}); }}
               className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                 moduloActivo === value
                   ? 'bg-blue-50 text-blue-700'
@@ -247,7 +273,12 @@ export default function DashboardPage() {
                 <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
                   <div className="flex items-center gap-3">
                     <CardTitle className="text-sm font-semibold text-gray-700">{moduloLabel}</CardTitle>
-                    <Badge variant="secondary">{datos.total.toLocaleString('es-AR')} registros</Badge>
+                    <Badge variant="secondary">
+                      {filtrosActivosCount > 0
+                        ? `${filasFiltradas.length.toLocaleString('es-AR')} de ${datos.total.toLocaleString('es-AR')} registros`
+                        : `${datos.total.toLocaleString('es-AR')} registros`
+                      }
+                    </Badge>
                     <span className="text-xs text-gray-400">{fechaConsulta}</span>
                   </div>
                   <Button variant="outline" size="sm" onClick={handleExportar} className="text-xs">
@@ -255,9 +286,28 @@ export default function DashboardPage() {
                     Exportar Excel
                   </Button>
                 </CardHeader>
+
+                {/* Filtros */}
+                {datos.filas.length > 0 && (
+                  <div className="px-6 py-3 border-t border-gray-100">
+                    <FiltroTabla
+                      headers={datos.headers}
+                      filas={datos.filas}
+                      filtros={filtros}
+                      onChange={handleFiltroChange}
+                      onLimpiar={handleLimpiarFiltros}
+                    />
+                  </div>
+                )}
+
                 <CardContent className="p-0">
-                  {datos.filas.length === 0 ? (
-                    <p className="px-6 py-4 text-sm text-gray-400">Sin resultados para el período seleccionado.</p>
+                  {filasFiltradas.length === 0 ? (
+                    <p className="px-6 py-4 text-sm text-gray-400">
+                      {filtrosActivosCount > 0
+                        ? 'Ningún registro coincide con los filtros seleccionados.'
+                        : 'Sin resultados para el período seleccionado.'
+                      }
+                    </p>
                   ) : (
                     <div className="overflow-x-auto">
                       <Table>
@@ -271,7 +321,7 @@ export default function DashboardPage() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {datos.filas.map((fila, i) => (
+                          {filasFiltradas.map((fila, i) => (
                             <TableRow key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
                               {fila.map((celda, j) => (
                                 <TableCell key={j} className="text-xs text-gray-700 whitespace-nowrap px-3 py-1.5">
