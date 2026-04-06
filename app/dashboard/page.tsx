@@ -15,6 +15,7 @@ import {
 } from 'recharts';
 import {
   Activity, FileText, TrendingUp, Users, DollarSign, LogOut, Loader2, Download,
+  ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { FiltroTabla, Filtros } from '@/components/FiltroTabla';
@@ -81,6 +82,8 @@ export default function DashboardPage() {
   const [truncado, setTruncado] = useState(false);
   const [totalReal, setTotalReal] = useState(0);
   const [filtros, setFiltros] = useState<Filtros>({});
+  const [pagina, setPagina] = useState(0);
+  const FILAS_POR_PAGINA = 200;
 
   // Filas después de aplicar filtros (AND entre columnas, OR dentro de la misma columna)
   const filasFiltradas = useMemo(() => {
@@ -92,7 +95,16 @@ export default function DashboardPage() {
     );
   }, [datos, filtros]);
 
+  // Filas de la página actual (sobre los datos ya filtrados)
+  const filasPagina = useMemo(() => {
+    const inicio = pagina * FILAS_POR_PAGINA;
+    return filasFiltradas.slice(inicio, inicio + FILAS_POR_PAGINA);
+  }, [filasFiltradas, pagina, FILAS_POR_PAGINA]);
+
+  const totalPaginas = Math.max(1, Math.ceil(filasFiltradas.length / FILAS_POR_PAGINA));
+
   const handleFiltroChange = useCallback((colIdx: number, valores: Set<string>) => {
+    setPagina(0); // volver a página 1 al cambiar filtros
     setFiltros(prev => {
       const next = { ...prev };
       if (valores.size === 0) delete next[colIdx];
@@ -101,7 +113,7 @@ export default function DashboardPage() {
     });
   }, []);
 
-  const handleLimpiarFiltros = useCallback(() => setFiltros({}), []);
+  const handleLimpiarFiltros = useCallback(() => { setFiltros({}); setPagina(0); }, []);
 
   async function handleConsultar(e: React.FormEvent) {
     e.preventDefault();
@@ -113,6 +125,7 @@ export default function DashboardPage() {
     setError('');
     setDatos(null);
     setFiltros({});
+    setPagina(0);
     setTruncado(false);
     try {
       const res = await fetch('/api/datos', {
@@ -168,7 +181,7 @@ export default function DashboardPage() {
           {MODULOS.map(({ value, label, icon: Icon }) => (
             <button
               key={value}
-              onClick={() => { setModuloActivo(value); setDatos(null); setError(''); setFiltros({}); }}
+              onClick={() => { setModuloActivo(value); setDatos(null); setError(''); setFiltros({}); setPagina(0); }}
               className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                 moduloActivo === value
                   ? 'bg-blue-50 text-blue-700'
@@ -235,7 +248,7 @@ export default function DashboardPage() {
               {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
               {truncado && (
                 <p className="mt-3 text-sm text-amber-600">
-                  Se muestran 5.000 de {totalReal.toLocaleString('es-AR')} registros totales.
+                  Se muestran 10.000 de {totalReal.toLocaleString('es-AR')} registros totales.
                 </p>
               )}
             </CardContent>
@@ -309,30 +322,60 @@ export default function DashboardPage() {
                       }
                     </p>
                   ) : (
-                    <div className="overflow-x-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow className="bg-gray-50">
-                            {datos.headers.map((h, i) => (
-                              <TableHead key={i} className="text-xs font-semibold text-gray-600 whitespace-nowrap px-3 py-2">
-                                {h}
-                              </TableHead>
-                            ))}
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {filasFiltradas.map((fila, i) => (
-                            <TableRow key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
-                              {fila.map((celda, j) => (
-                                <TableCell key={j} className="text-xs text-gray-700 whitespace-nowrap px-3 py-1.5">
-                                  {celda}
-                                </TableCell>
+                    <>
+                      <div className="overflow-x-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="bg-gray-50">
+                              {datos.headers.map((h, i) => (
+                                <TableHead key={i} className="text-xs font-semibold text-gray-600 whitespace-nowrap px-3 py-2">
+                                  {h}
+                                </TableHead>
                               ))}
                             </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
+                          </TableHeader>
+                          <TableBody>
+                            {filasPagina.map((fila, i) => (
+                              <TableRow key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
+                                {fila.map((celda, j) => (
+                                  <TableCell key={j} className="text-xs text-gray-700 whitespace-nowrap px-3 py-1.5">
+                                    {celda}
+                                  </TableCell>
+                                ))}
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+
+                      {/* Paginación */}
+                      {totalPaginas > 1 && (
+                        <div className="flex items-center justify-between px-4 py-2.5 border-t border-gray-100 bg-gray-50/50">
+                          <span className="text-xs text-gray-500">
+                            Mostrando {pagina * FILAS_POR_PAGINA + 1}–{Math.min((pagina + 1) * FILAS_POR_PAGINA, filasFiltradas.length)} de {filasFiltradas.length.toLocaleString('es-AR')}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => setPagina(p => Math.max(0, p - 1))}
+                              disabled={pagina === 0}
+                              className="p-1 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed"
+                            >
+                              <ChevronLeft className="w-4 h-4 text-gray-600" />
+                            </button>
+                            <span className="text-xs text-gray-600 px-2">
+                              {pagina + 1} / {totalPaginas}
+                            </span>
+                            <button
+                              onClick={() => setPagina(p => Math.min(totalPaginas - 1, p + 1))}
+                              disabled={pagina >= totalPaginas - 1}
+                              className="p-1 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed"
+                            >
+                              <ChevronRight className="w-4 h-4 text-gray-600" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </>
                   )}
                 </CardContent>
               </Card>
