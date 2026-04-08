@@ -1,8 +1,36 @@
 import { getServerSession } from 'next-auth';
 import { NextRequest, NextResponse } from 'next/server';
+import { request as httpRequest } from 'http';
 import { authOptions } from '@/app/api/auth/[...nextauth]/route';
 
-export const maxDuration = 300; // 5 minutos — rangos amplios requieren múltiples bloques
+export const maxDuration = 300; // 5 minutos — para Vercel/producción
+
+// Usa http.request (Node.js core) en lugar de fetch() global para evitar
+// el headersTimeout de 300s que tiene undici por defecto en Node.js 18+.
+// El backend puede tardar >5 minutos en rangos amplios (múltiples bloques).
+function callBackend(backendUrl: string, body: string): Promise<{ status: number; text: string }> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      `${backendUrl}/api/datos`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      },
+      (res) => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk: string) => { text += chunk; });
+        res.on('end', () => resolve({ status: res.statusCode ?? 200, text }));
+      }
+    );
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -25,40 +53,35 @@ export async function POST(req: NextRequest) {
   const backendUrl = process.env.BACKEND_URL;
   console.log(`[datos] → backend ${backendUrl} modulo=${modulo} desde=${desde} hasta=${hasta}`);
 
-  let res: Response;
+  let result: { status: number; text: string };
   try {
-    res = await fetch(`${backendUrl}/api/datos`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        usuario:  process.env.ADMIN_USER,
-        password: process.env.ADMIN_PASSWORD,
-        modulo,
-        desde,
-        hasta,
-      }),
-    });
+    result = await callBackend(backendUrl!, JSON.stringify({
+      usuario:  process.env.ADMIN_USER,
+      password: process.env.ADMIN_PASSWORD,
+      modulo,
+      desde,
+      hasta,
+    }));
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Error de red';
     console.error('[datos] Error conectando al backend:', msg);
     return NextResponse.json({ error: `No se pudo conectar al backend: ${msg}` }, { status: 502 });
   }
 
-  console.log(`[datos] ← backend status=${res.status}`);
+  console.log(`[datos] ← backend status=${result.status}`);
 
-  const text = await res.text();
-  if (!text) {
+  if (!result.text) {
     console.error('[datos] Respuesta vacía del backend');
     return NextResponse.json({ error: 'Respuesta vacía del backend' }, { status: 502 });
   }
 
   let data: unknown;
   try {
-    data = JSON.parse(text);
+    data = JSON.parse(result.text);
   } catch {
-    console.error('[datos] Respuesta no es JSON:', text.substring(0, 200));
+    console.error('[datos] Respuesta no es JSON:', result.text.substring(0, 200));
     return NextResponse.json({ error: 'Respuesta inválida del backend' }, { status: 502 });
   }
 
-  return NextResponse.json(data, { status: res.status });
+  return NextResponse.json(data, { status: result.status });
 }

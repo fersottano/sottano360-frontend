@@ -246,9 +246,9 @@ export default function DashboardPage() {
                 </Button>
               </form>
               {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
-              {truncado && (
+              {truncado && datos && (
                 <p className="mt-3 text-sm text-amber-600">
-                  Se muestran 10.000 de {totalReal.toLocaleString('es-AR')} registros totales.
+                  Se muestran {datos.total.toLocaleString('es-AR')} de {totalReal.toLocaleString('es-AR')} registros totales.
                 </p>
               )}
             </CardContent>
